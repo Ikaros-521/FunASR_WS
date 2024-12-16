@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>语音识别</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f4f4f9;
+      color: #333;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 20px auto;
+      padding: 20px;
+      background: #ffffff;
+      border-radius: 10px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    h1 {
+      text-align: center;
+      color: #444;
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      padding: 10px;
+      margin-top: 10px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+
+    textarea[readonly] {
+      background-color: #f9f9f9;
+      color: #666;
+    }
+
+    label {
+      display: block;
+      margin-top: 15px;
+      font-weight: bold;
+    }
+
+    .group {
+      margin-bottom: 20px;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      background: #fafafa;
+    }
+
+    button {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      font-size: 14px;
+      cursor: pointer;
+      border-radius: 5px;
+      margin-right: 10px;
+      transition: background-color 0.3s, opacity 0.3s;
+    }
+
+    button:hover {
+      background-color: #0056b3;
+    }
+
+    button:disabled {
+      background-color: #cccccc;
+      color: #666666;
+      cursor: not-allowed;
+      opacity: 0.7;
+    }
+
+    a {
+      color: #007bff;
+      text-decoration: none;
+      font-size: 14px;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .audio-container {
+      margin-top: 20px;
+      text-align: center;
+    }
+
+    .radio-group {
+      display: flex;
+      gap: 15px;
+      margin-top: 10px;
+    }
+
+    .radio-group label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-weight: normal;
+    }
+
+    @media (max-width: 600px) {
+      .container {
+        padding: 15px;
+      }
+
+      button {
+        width: 100%;
+        margin-bottom: 10px;
+      }
+
+      .radio-group {
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>语音识别</h1>
+    <div class="group">
+      <label for="wssip">ASR服务器地址 (必填):</label>
+      <input id="wssip" type="text" onchange="addresschange()" value="ws://127.0.0.1:10096/" />
+      <a id="wsslink" href="#" onclick="window.open('https://127.0.0.1:10096/', '_blank')">
+        点此处手工授权 wss://127.0.0.1:10096/
+      </a>
+      <label for="ai_vtuber_api_url">AI Vtuber API地址:</label>
+      <input id="ai_vtuber_api_url" type="text" value="http://127.0.0.1:8082/" />
+      <label for="livetalking_api_url">LiveTalking API地址:</label>
+      <input id="livetalking_api_url" type="text" value="http://127.0.0.1:8010/" />
+    </div>
+
+    <div class="group">
+      <label>选择录音模式:</label>
+      <div class="radio-group">
+        <label>
+          <input name="recoder_mode" onclick="on_recoder_mode_change()" type="radio" value="mic" checked />
+          麦克风
+        </label>
+        <label>
+          <input name="recoder_mode" onclick="on_recoder_mode_change()" type="radio" value="file" />
+          文件
+        </label>
+      </div>
+    </div>
+
+    <div id="mic_mode_div" class="group">
+      <label>选择ASR模型模式:</label>
+      <div class="radio-group">
+        <label>
+          <input name="asr_mode" type="radio" value="2pass" checked />
+          2pass
+        </label>
+        <label>
+          <input name="asr_mode" type="radio" value="online" />
+          online
+        </label>
+        <label>
+          <input name="asr_mode" type="radio" value="offline" />
+          offline
+        </label>
+      </div>
+    </div>
+
+    <div id="rec_mode_div" class="group" style="display: none;">
+      <label for="upfile">上传文件:</label>
+      <input type="file" id="upfile" />
+    </div>
+
+    <div id="use_itn_div" class="group">
+      <label>逆文本标准化 (ITN):</label>
+      <div class="radio-group">
+        <label>
+          <input name="use_itn" type="radio" value="false" checked />
+          否
+        </label>
+        <label>
+          <input name="use_itn" type="radio" value="true" />
+          是
+        </label>
+      </div>
+    </div>
+
+    <div class="group">
+      <label for="varHot">热词设置 (一行一个关键字，空格隔开权重):</label>
+      <textarea rows="3" id="varHot">
+阿里巴巴 20&#13;hello world 40
+        </textarea>
+    </div>
+
+    <div class="group">
+      <label>选择数据转发:</label>
+      <div class="radio-group">
+        <label>
+          <input name="data_forward" onclick="on_data_forward_change()" type="radio" value="ai_vtuber" />
+          AI Vtuber
+        </label>
+        <label>
+          <input name="data_forward" onclick="on_data_forward_change()" type="radio" value="livetalking" />
+          LiveTalking
+        </label>
+        <label>
+          <input name="data_forward" onclick="on_data_forward_change()" type="radio" value="none" checked />
+          不转发
+        </label>
+      </div>
+    </div>
+
+    <div class="group">
+      <label for="varArea">语音识别结果显示:</label>
+      <textarea rows="10" id="varArea" readonly></textarea>
+    </div>
+
+    <div class="group">
+      <div id="info_div">请点击开始</div>
+      <button id="btnConnect">连接</button>
+      <button id="btnStart">开始</button>
+      <button id="btnStop">停止</button>
+    </div>
+
+    <div class="audio-container">
+      <audio id="audio_record" type="audio/wav" controls></audio>
+    </div>
+  </div>
+
+  <script src="recorder-core.js" charset="UTF-8"></script>
+  <script src="wav.js" charset="UTF-8"></script>
+  <script src="pcm.js" charset="UTF-8"></script>
+  <script src="wsconnecter.js" charset="utf-8"></script>
+  <script src="main.js" charset="utf-8"></script>
+</body>
+
+</html>
