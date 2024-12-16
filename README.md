@@ -21,6 +21,10 @@ python webui.py
 http://127.0.0.1:8101
 ```
 
+效果预览：
+![image](https://github.com/user-attachments/assets/56628b48-65de-454d-b941-7eb6432f347c)
+
+
 
 # Service with websocket-python
 
