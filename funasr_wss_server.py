@@ -48,7 +48,7 @@ parser.add_argument("--ncpu", type=int, default=4, help="cpu cores")
 parser.add_argument(
     "--certfile",
     type=str,
-    default="../../ssl_key/server.crt",
+    default="cert.pem",
     required=False,
     help="certfile for ssl",
 )
@@ -56,7 +56,7 @@ parser.add_argument(
 parser.add_argument(
     "--keyfile",
     type=str,
-    default="../../ssl_key/server.key",
+    default="key.pem",
     required=False,
     help="keyfile for ssl",
 )
@@ -65,7 +65,7 @@ args = parser.parse_args()
 
 websocket_users = set()
 
-logger.info("模型加载中...")
+logger.info("模型加载中，请耐心等待...")
 from funasr import AutoModel
 
 # asr
@@ -77,6 +77,7 @@ model_asr = AutoModel(
     device=args.device,
     disable_pbar=True,
     disable_log=True,
+    disable_update=True,
 )
 # asr
 model_asr_streaming = AutoModel(
@@ -87,6 +88,7 @@ model_asr_streaming = AutoModel(
     device=args.device,
     disable_pbar=True,
     disable_log=True,
+    disable_update=True,
 )
 # vad
 model_vad = AutoModel(
@@ -98,6 +100,7 @@ model_vad = AutoModel(
     disable_pbar=True,
     disable_log=True,
     # chunk_size=60,
+    disable_update=True,
 )
 
 if args.punc_model != "":
@@ -109,6 +112,7 @@ if args.punc_model != "":
         device=args.device,
         disable_pbar=True,
         disable_log=True,
+        disable_update=True,
     )
 else:
     model_punc = None

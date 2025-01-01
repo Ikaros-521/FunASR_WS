@@ -28,4 +28,6 @@ log.txt
 wav2lip/results/
 
 metahuman-stream*
-Miniconda*.zip
+*.zip
+FunASR_WS/
+*.pem
