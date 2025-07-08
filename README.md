@@ -18,7 +18,7 @@ python webui.py
 
 浏览器访问：
 ```shell
-http://127.0.0.1:8101
+http://127.0.0.1:8101/web/index.html
 ```
 
 效果预览：
