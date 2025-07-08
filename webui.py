@@ -1,6 +1,7 @@
 import subprocess
 import json
 import os
+import argparse
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -35,4 +36,23 @@ async def shutdown_event():
     os._exit(0)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8101)
+    parser = argparse.ArgumentParser(description="Run the FastAPI server with optional SSL.")
+    parser.add_argument("--ssl", action="store_true", help="Enable SSL (HTTPS) mode")
+    args = parser.parse_args()
+
+    if args.ssl:
+        # 启用 HTTPS
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=8101,
+            ssl_keyfile="key.pem",
+            ssl_certfile="cert.pem"
+        )
+    else:
+        # 仅 HTTP
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=8101
+        )
