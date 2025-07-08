@@ -64,19 +64,23 @@ function WebSocketConnectMethod(config) { //定义socket连接方法类
 		var chunk_size = new Array(5, 10, 5);
 		var request = {
 			"chunk_size": chunk_size,
-			"wav_name": "h5",
+			"wav_name": isfilemode ? file_ext : "h5",
 			"is_speaking": true,
 			"chunk_interval": 10,
 			"itn": getUseITN(),
 			"mode": getAsrMode(),
-
 		};
+		
 		if (isfilemode) {
-			request.wav_format = file_ext;
-			if (file_ext == "wav") {
+			// 设置文件特定的处理信息
+			request.wav_format = file_ext.toUpperCase();
+			if (file_ext.toLowerCase() == "wav") {
 				request.wav_format = "PCM";
 				request.audio_fs = file_sample_rate;
 			}
+			// 对于文件模式，强制使用离线识别
+			request.mode = "offline";
+			console.log("文件上传模式: " + file_ext + ", 采样率: " + file_sample_rate + ", 模式: " + request.mode);
 		}
 
 		var hotwords = getHotwords();
@@ -96,16 +100,14 @@ function WebSocketConnectMethod(config) { //定义socket连接方法类
 	}
 
 	function onMessage(e) {
-
+		console.log("WebSocket message received:", e.data ? e.data.substring(0, 100) + "..." : "empty");
 		msgHandle(e);
 	}
 
 	function onError(e) {
-
-		info_div.innerHTML = "连接" + e;
-		console.log(e);
+		console.error("WebSocket error:", e);
+		info_div.innerHTML = "连接错误: " + e;
 		stateHandle(2);
-
 	}
 
 

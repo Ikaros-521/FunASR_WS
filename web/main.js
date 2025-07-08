@@ -144,38 +144,59 @@ var readWavInfo = function (bytes) {
 
 upfile.onchange = function () {
 	var len = this.files.length;
-	for (let i = 0; i < len; i++) {
-
-		let fileAudio = new FileReader();
-		fileAudio.readAsArrayBuffer(this.files[i]);
-
-		file_ext = this.files[i].name.split('.').pop().toLowerCase();
-		var audioblob;
-		fileAudio.onload = function () {
-			audioblob = fileAudio.result;
-			file_data_array = audioblob;
-			info_div.innerHTML = '请点击连接进行识别';
-		}
-
-		fileAudio.onerror = function (e) {
-			console.log('error' + e);
-		}
+	if (len === 0) {
+		info_div.innerHTML = '请选择文件';
+		return;
 	}
-	// for wav file, we  get the sample rate
-	if (file_ext == "wav")
-		for (let i = 0; i < len; i++) {
-
-			let fileAudio = new FileReader();
-			fileAudio.readAsArrayBuffer(this.files[i]);
-			fileAudio.onload = function () {
-				audioblob = new Uint8Array(fileAudio.result);
-
-				// for wav file, we can get the sample rate
-				var info = readWavInfo(audioblob);
-				console.log(info);
-				file_sample_rate = info.sampleRate;
+	
+	// 清空之前的结果
+	clear();
+	
+	// 只处理第一个文件
+	var selectedFile = this.files[0];
+	file_ext = selectedFile.name.split('.').pop().toLowerCase();
+	
+	console.log("Selected file:", selectedFile.name, "Type:", selectedFile.type, "Size:", selectedFile.size, "bytes");
+	
+	// 检查文件类型
+	var supportedTypes = ['wav', 'mp3', 'pcm'];
+	if (!supportedTypes.includes(file_ext)) {
+		info_div.innerHTML = '不支持的文件类型，请选择 WAV、MP3 或 PCM 文件';
+		return;
+	}
+	
+	// 读取文件数据
+	let fileAudio = new FileReader();
+	fileAudio.readAsArrayBuffer(selectedFile);
+	
+	fileAudio.onload = function () {
+		file_data_array = fileAudio.result;
+		console.log("File loaded, size:", file_data_array.byteLength, "bytes");
+		
+		// 对于 WAV 文件，获取采样率
+		if (file_ext === "wav") {
+			try {
+				var audioData = new Uint8Array(file_data_array);
+				var info = readWavInfo(audioData);
+				if (info && info.sampleRate) {
+					file_sample_rate = info.sampleRate;
+					console.log("WAV sample rate:", file_sample_rate);
+				} else {
+					console.warn("Could not determine WAV sample rate, using default:", file_sample_rate);
+				}
+			} catch (e) {
+				console.error("Error reading WAV info:", e);
 			}
 		}
+		
+		btnConnect.disabled = false;
+		info_div.innerHTML = '文件已加载，请点击连接进行识别';
+	};
+	
+	fileAudio.onerror = function (e) {
+		console.error('File read error:', e);
+		info_div.innerHTML = '文件读取错误，请重试';
+	};
 }
 
 function play_file() {
@@ -186,19 +207,57 @@ function play_file() {
 	//audio_record.play();  //not auto play
 }
 function start_file_send() {
-	sampleBuf = new Uint8Array(file_data_array);
-
-	var chunk_size = 960; // for asr chunk_size [5, 10, 5]
-
-	while (sampleBuf.length >= chunk_size) {
-
-		sendBuf = sampleBuf.slice(0, chunk_size);
-		totalsend = totalsend + sampleBuf.length;
-		sampleBuf = sampleBuf.slice(chunk_size, sampleBuf.length);
-		wsconnecter.wsSend(sendBuf);
+	if (!file_data_array || file_data_array.byteLength === 0) {
+		console.error("文件数据为空");
+		info_div.innerHTML = "文件数据为空，请重新选择文件";
+		btnConnect.disabled = false;
+		return;
 	}
 
-	stop();
+	// 清空之前的结果
+	clear();
+	
+	console.log("开始发送文件数据，长度:", file_data_array.byteLength, "字节");
+	sampleBuf = new Uint8Array(file_data_array);
+	totalsend = 0;
+
+	// 对于较大的文件，使用较大的块大小以提高传输效率
+	var chunk_size = 1920; // 增大块大小，提高传输效率
+	var total_chunks = Math.ceil(sampleBuf.length / chunk_size);
+	var sent_chunks = 0;
+
+	// 定时发送数据，避免一次性发送过多数据导致服务器处理不过来
+	var sendInterval = setInterval(function() {
+		if (sampleBuf.length <= 0) {
+			clearInterval(sendInterval);
+			console.log("所有数据已发送，总计:", totalsend, "字节");
+			
+			// 添加延迟，确保所有数据都被服务器接收
+			setTimeout(function() {
+				stop();
+			}, 500);
+			return;
+		}
+
+		var sendSize = Math.min(chunk_size, sampleBuf.length);
+		var sendBuf = sampleBuf.slice(0, sendSize);
+		sampleBuf = sampleBuf.slice(sendSize);
+		
+		try {
+			wsconnecter.wsSend(sendBuf);
+			totalsend += sendSize;
+			sent_chunks++;
+			
+			// 更新进度信息
+			var progress = Math.round((sent_chunks / total_chunks) * 100);
+			info_div.innerHTML = "发送数据中: " + progress + "% (" + sent_chunks + "/" + total_chunks + ")";
+		} catch (e) {
+			console.error("发送数据时出错:", e);
+			clearInterval(sendInterval);
+			info_div.innerHTML = "发送数据时出错，请重试";
+			btnConnect.disabled = false;
+		}
+	}, 5); // 每5ms发送一个数据块，提高传输速度
 }
 
 // 修改数据转发模式
@@ -389,69 +448,116 @@ async function waitSpeakingEnd() {
 }
 // 语音识别结果; 对jsonMsg数据解析,将识别结果附加到编辑框中
 function getJsonMessage(jsonMsg) {
-	//console.log(jsonMsg);
-	// console.log("message: " + JSON.parse(jsonMsg.data)['text']);
-	var rectxt = "" + JSON.parse(jsonMsg.data)['text'];
-	var asrmodel = JSON.parse(jsonMsg.data)['mode'];
-	var is_final = JSON.parse(jsonMsg.data)['is_final'];
-	var timestamp = JSON.parse(jsonMsg.data)['timestamp'];
-	if (asrmodel == "2pass-offline" || asrmodel == "offline") {
-		// 过滤特殊字符
-		rectxt = rectxt.replace(/<[^>]*>/g, '');
+	try {
+		console.log("Received message:", jsonMsg.data);
+		var jsonData = JSON.parse(jsonMsg.data);
+		var rectxt = jsonData['text'] || "";
+		var asrmodel = jsonData['mode'] || "";
+		var is_final = jsonData['is_final'];
+		var timestamp = jsonData['timestamp'];
 		
-		offline_text = offline_text + rectxt.replace(/ +/g, "") + '\n'; //handleWithTimestamp(rectxt,timestamp); //rectxt; //.replace(/ +/g,"");
-		rec_text = offline_text;
+		// 记录接收到的消息，便于调试
+		console.log("Mode:", asrmodel, "Text:", rectxt, "Is Final:", is_final);
 		
-		if (data_forward == "livetalking") {
-			fetch(buildUrl(document.getElementById("livetalking_api_url").value, '/human'), {
-				body: JSON.stringify({
-					text: rectxt.replace(/ +/g, ""),
-					type: 'chat',
-				}),
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				method: 'POST'
-			});
-		} else if (data_forward == "ai_vtuber") {
-		    fetch(buildUrl(document.getElementById("ai_vtuber_api_url").value, '/send'), {
-				body: JSON.stringify({
-					type: 'comment',
-					data: {
-						"type": 'comment',
-						"username": '主人',
-						"content": rectxt.replace(/ +/g, ""),
+		// 文件模式下特殊处理
+		if (isfilemode) {
+			console.log("处理文件模式的识别结果");
+			
+			// 过滤特殊字符
+			rectxt = rectxt.replace(/<[^>]*>/g, '');
+			
+			// 添加到结果中，即使是空文本也要更新UI
+			if (rectxt && rectxt.trim().length > 0) {
+				console.log("有识别结果，添加到文本框");
+				offline_text = offline_text + rectxt.replace(/ +/g, "") + '\n';
+			} else {
+				console.log("识别结果为空");
+			}
+			
+			// 无论有无文本都更新显示
+			rec_text = offline_text;
+			var varArea = document.getElementById('varArea');
+			varArea.value = rec_text;
+			
+			// 如果是最终结果，处理连接关闭
+			if (is_final) {
+				console.log("文件模式最终结果，准备关闭连接");
+				play_file();
+				
+				// 延迟关闭连接，确保所有数据都被处理
+				setTimeout(function() {
+					wsconnecter.wsStop();
+					
+					// 根据是否有识别结果显示不同的提示
+					if (rec_text && rec_text.trim().length > 0) {
+						info_div.innerHTML = "识别完成，请点击连接";
+					} else {
+						info_div.innerHTML = "未能识别出文本，请尝试其他文件";
 					}
-				}),
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				method: 'POST'
-			});
+					
+					btnStart.disabled = true;
+					btnStop.disabled = true;
+					btnConnect.disabled = false;
+				}, 2000); // 增加延迟时间到2秒
+			}
+			return;
 		}
+		
+		// 非文件模式的处理逻辑
+		if (asrmodel == "2pass-offline" || asrmodel == "offline") {
+			// 过滤特殊字符
+			rectxt = rectxt.replace(/<[^>]*>/g, '');
+			
+			// 只有在有文本内容时才添加到结果中
+			if (rectxt && rectxt.trim().length > 0) {
+				offline_text = offline_text + rectxt.replace(/ +/g, "") + '\n';
+				rec_text = offline_text;
+				
+				if (data_forward == "livetalking") {
+					fetch(buildUrl(document.getElementById("livetalking_api_url").value, '/human'), {
+						body: JSON.stringify({
+							text: rectxt.replace(/ +/g, ""),
+							type: 'chat',
+						}),
+						headers: {
+							'Content-Type': 'application/json'
+						},
+						method: 'POST'
+					});
+				} else if (data_forward == "ai_vtuber") {
+					fetch(buildUrl(document.getElementById("ai_vtuber_api_url").value, '/send'), {
+						body: JSON.stringify({
+							type: 'comment',
+							data: {
+								"type": 'comment',
+								"username": '主人',
+								"content": rectxt.replace(/ +/g, ""),
+							}
+						}),
+						headers: {
+							'Content-Type': 'application/json'
+						},
+						method: 'POST'
+					});
+				}
 
-		waitSpeakingEnd();
-	}
-	else {
-		rec_text = rec_text + rectxt; //.replace(/ +/g,"");
-	}
-	var varArea = document.getElementById('varArea');
-
-	// 过滤特殊字符
-	rec_text = rec_text.replace(/<[^>]*>/g, '');
-	varArea.value = rec_text;
-	// console.log("offline_text: " + asrmodel + "," + offline_text);
-	// console.log("rec_text: " + rec_text);
-	if (isfilemode == true && is_final == true) {
-		console.log("call stop ws!");
-		play_file();
-		wsconnecter.wsStop();
-
-		info_div.innerHTML = "请点击连接";
-
-		btnStart.disabled = true;
-		btnStop.disabled = true;
-		btnConnect.disabled = false;
+				waitSpeakingEnd();
+			}
+		}
+		else {
+			// 只有在有文本内容时才添加到结果中
+			if (rectxt && rectxt.trim().length > 0) {
+				rec_text = rec_text + rectxt;
+			}
+		}
+		
+		var varArea = document.getElementById('varArea');
+		// 过滤特殊字符
+		rec_text = rec_text.replace(/<[^>]*>/g, '');
+		varArea.value = rec_text;
+	} catch (error) {
+		console.error("处理识别结果时出错:", error);
+		info_div.innerHTML = "处理识别结果时出错，请重试";
 	}
 }
 
@@ -526,25 +632,39 @@ function start() {
 
 
 function stop() {
+	console.log("Stopping, file mode:", isfilemode);
+	
 	var chunk_size = new Array(5, 10, 5);
 	var request = {
 		"chunk_size": chunk_size,
-		"wav_name": "h5",
+		"wav_name": isfilemode ? file_ext : "h5",
 		"is_speaking": false,
 		"chunk_interval": 10,
 		"mode": getAsrMode(),
 		"url": document.getElementById('audio_record').src,
 	};
-	console.log(request);
-	if (sampleBuf.length > 0) {
-		wsconnecter.wsSend(sampleBuf);
-		console.log("sampleBuf.length" + sampleBuf.length);
-		sampleBuf = new Int16Array();
+	
+	// 添加文件特定的信息
+	if (isfilemode) {
+		request.wav_format = file_ext.toUpperCase();
+		if (file_ext.toLowerCase() === "wav") {
+			request.audio_fs = file_sample_rate;
+		}
 	}
+	
+	console.log("Sending stop request:", request);
+	
+	// 确保所有剩余数据都被发送
+	if (sampleBuf && sampleBuf.length > 0) {
+		console.log("Sending remaining data, length:", sampleBuf.length);
+		wsconnecter.wsSend(sampleBuf);
+		sampleBuf = isfilemode ? new Uint8Array() : new Int16Array();
+	}
+	
+	// 发送停止请求
 	wsconnecter.wsSend(JSON.stringify(request));
 
 	// 控件状态更新
-
 	isRec = false;
 	info_div.innerHTML = "发送完数据,请等候,正在识别...";
 

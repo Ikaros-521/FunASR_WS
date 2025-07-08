@@ -31,3 +31,4 @@ metahuman-stream*
 *.zip
 FunASR_WS/
 *.pem
+.history
