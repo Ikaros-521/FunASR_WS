@@ -39,6 +39,10 @@
       box-sizing: border-box;
     }
 
+    input[type="radio"] {
+      margin-top: 0px;
+    }
+
     textarea[readonly] {
       background-color: #f9f9f9;
       color: #666;
@@ -98,15 +102,19 @@
 
     .radio-group {
       display: flex;
-      gap: 15px;
+      gap: 8px;
       margin-top: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-start;
     }
 
     .radio-group label {
       display: flex;
       align-items: center;
-      gap: 5px;
+      gap: 4px;
       font-weight: normal;
+      white-space: nowrap;
     }
 
     @media (max-width: 600px) {
@@ -117,10 +125,6 @@
       button {
         width: 100%;
         margin-bottom: 10px;
-      }
-
-      .radio-group {
-        flex-direction: column;
       }
     }
   </style>
