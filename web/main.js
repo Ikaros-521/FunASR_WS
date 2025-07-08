@@ -58,12 +58,17 @@ function buildUrl(baseUrl, endpoint) {
     return url.toString();
 }
 
-// var now_ipaddress=window.location.href;
-// now_ipaddress=now_ipaddress.replace("https://","wss://");
-// now_ipaddress=now_ipaddress.replace("static/index.html","");
-// var localport=window.location.port;
-// now_ipaddress=now_ipaddress.replace(localport,"10095");
-// document.getElementById('wssip').value=now_ipaddress;
+// 自动设置wssip输入框为当前页面协议和IP
+(function setWssipByLocation() {
+    var protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+    var host = window.location.hostname;
+    var wssip = protocol + host + ':10096/';
+    var wssipInput = document.getElementById('wssip');
+    if (wssipInput) {
+        wssipInput.value = wssip;
+    }
+})();
+
 addresschange();
 function addresschange() {
 
