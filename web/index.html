@@ -139,10 +139,10 @@
       <a id="wsslink" href="#" onclick="window.open('https://127.0.0.1:10096/', '_blank')">
         点此处手工授权 wss://127.0.0.1:10096/
       </a>
-      <label for="ai_vtuber_api_url">AI Vtuber API地址:</label>
-      <input id="ai_vtuber_api_url" type="text" value="http://127.0.0.1:8082/" />
-      <label for="livetalking_api_url">LiveTalking API地址:</label>
-      <input id="livetalking_api_url" type="text" value="http://127.0.0.1:8010/" />
+      <label for="ai_vtuber_api_url" style="display: none;">AI Vtuber API地址:</label>
+      <input id="ai_vtuber_api_url" type="text" value="http://127.0.0.1:8082/" style="display: none;" />
+      <label for="livetalking_api_url" style="display: none;">LiveTalking API地址:</label>
+      <input id="livetalking_api_url" type="text" value="http://127.0.0.1:8010/" style="display: none;" />
     </div>
 
     <div class="group">
@@ -211,9 +211,17 @@
         </textarea>
     </div>
 
-    <div class="group">
+    <div class="group" style="display: none;">
       <label>选择数据转发:</label>
       <div class="radio-group">
+        <label>
+          <input name="data_forward" onclick="on_data_forward_change()" type="radio" value="ai_vtuber" />
+          AI Vtuber
+        </label>
+        <label>
+          <input name="data_forward" onclick="on_data_forward_change()" type="radio" value="livetalking" />
+          LiveTalking
+        </label>
         <label>
           <input name="data_forward" onclick="on_data_forward_change()" type="radio" value="none" checked />
           不转发
