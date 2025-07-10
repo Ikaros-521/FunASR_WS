@@ -99,8 +99,6 @@ model_asr_streaming = AutoModel(
     disable_log=True,
     disable_update=True,
 )
-# 如果这个设置为None，就不会一个字一个字的识别，而是等断句后，所有数据都传过来再识别
-# model_asr_streaming = None
 # vad
 model_vad = AutoModel(
     model=args.vad_model,
@@ -110,7 +108,6 @@ model_vad = AutoModel(
     device=args.device,
     disable_pbar=True,
     disable_log=True,
-    # 分块大小
     # chunk_size=60,
     disable_update=True,
 )
@@ -162,7 +159,6 @@ async def ws_serve(websocket, path):
     websocket.status_dict_asr_online = {"cache": {}, "is_final": False}
     websocket.status_dict_vad = {"cache": {}, "is_final": False}
     websocket.status_dict_punc = {"cache": {}}
-    # 流式分块间隔
     websocket.chunk_interval = 10
     websocket.vad_pre_idx = 0
     speech_start = False
@@ -176,13 +172,6 @@ async def ws_serve(websocket, path):
     websocket.audio_fs = 16000  # 默认采样率 - ASR模型期望16kHz
     logger.info("新用户已连接")
 
-    # 新增：维护流内时间戳和VAD句子起止点
-    current_stream_time = 0.0  # 单位：秒
-    vad_sentence_start_time = None
-    vad_sentence_end_time = None
-    frame_samples = None
-    frame_duration = None
-
     try:
         async for message in websocket:
             if isinstance(message, str):
@@ -193,7 +182,7 @@ async def ws_serve(websocket, path):
                     websocket.status_dict_asr_online["is_final"] = not websocket.is_speaking
                     logger.info(f"说话状态更新: {websocket.is_speaking}")
                     
-                    # 如果是文件模式且停止说话，处理所有累积的数据
+                                         # 如果是文件模式且停止说话，处理所有累积的数据
                     if websocket.is_file_mode and not websocket.is_speaking and len(websocket.file_data) > 0:
                         logger.info(f"文件模式: 处理累积的数据，大小: {len(websocket.file_data)} 块")
                         try:
@@ -303,21 +292,17 @@ async def ws_serve(websocket, path):
                     
                     # 以下是麦克风模式的处理
                     frames.append(message)
-                    # 计算帧持续时间
-                    frame_samples = len(message) // 2  # 2字节=1采样点
-                    frame_duration = frame_samples / float(websocket.audio_fs)  # 秒
-                    current_stream_time += frame_duration
-                    websocket.vad_pre_idx += int(frame_duration * 1000)  # ms
+                    duration_ms = len(message) // 32
+                    websocket.vad_pre_idx += duration_ms
 
-                    # asr online - 在VAD检测之后处理
+                    # asr online
                     frames_asr_online.append(message)
                     websocket.status_dict_asr_online["is_final"] = speech_end_i != -1
                     if (
                         len(frames_asr_online) % websocket.chunk_interval == 0
                         or websocket.status_dict_asr_online["is_final"]
                     ):
-                        # 如果模式是2pass或online，且不是2pass-final-only模式（新增判断）
-                        if (websocket.mode == "2pass" or websocket.mode == "online") and websocket.mode != "2pass-final-only":
+                        if websocket.mode == "2pass" or websocket.mode == "online":
                             audio_in = b"".join(frames_asr_online)
                             try:
                                 await async_asr_online(websocket, audio_in)
@@ -339,13 +324,12 @@ async def ws_serve(websocket, path):
                         frames_asr.extend(frames_pre)
                 # asr punc offline - 非文件模式下的处理
                 if not websocket.is_file_mode and (speech_end_i != -1 or not websocket.is_speaking):
-                    logger.info(f"检测到语音结束点或停止说话，处理离线ASR，当前模式: {websocket.mode}")
-                    if websocket.mode == "2pass" or websocket.mode == "offline" or websocket.mode == "2pass-final-only":
+                    logger.info("检测到语音结束点或停止说话")
+                    if websocket.mode == "2pass" or websocket.mode == "offline":
                         audio_in = b"".join(frames_asr)
                         logger.info(f"离线ASR处理，数据大小: {len(audio_in)} 字节")
                         try:
-                            # 传递VAD起止时间
-                            await async_asr(websocket, audio_in, vad_sentence_start_time, vad_sentence_end_time)
+                            await async_asr(websocket, audio_in)
                         except Exception as e:
                             logger.error(f"离线ASR处理出错: {str(e)}")
                     frames_asr = []
@@ -386,7 +370,7 @@ async def async_vad(websocket, audio_in):
     return speech_start, speech_end
 
 
-async def async_asr(websocket, audio_in, vad_sentence_start_time=None, vad_sentence_end_time=None):
+async def async_asr(websocket, audio_in):
     if len(audio_in) > 0:
         logger.info(f"处理音频数据，长度: {len(audio_in)} 字节")
         try:
@@ -407,14 +391,14 @@ async def async_asr(websocket, audio_in, vad_sentence_start_time=None, vad_sente
             
             # 调用ASR模型进行识别
             logger.info("调用ASR模型进行识别...")
-            rec_result = model_asr.generate(input=audio_in, output_key=["text", "timestamp"], **websocket.status_dict_asr)[0]
+            rec_result = model_asr.generate(input=audio_in, **websocket.status_dict_asr)[0]
             logger.info(f"ASR识别结果: {rec_result}")
             
             # 应用标点符号
             if model_punc is not None and len(rec_result["text"]) > 0:
                 logger.info(f"应用标点符号前: {rec_result['text']}")
                 rec_result = model_punc.generate(
-                    input=rec_result["text"], output_key=["text", "timestamp"], **websocket.status_dict_punc
+                    input=rec_result["text"], **websocket.status_dict_punc
                 )[0]
                 logger.info(f"应用标点符号后: {rec_result['text']}")
             
@@ -424,23 +408,14 @@ async def async_asr(websocket, audio_in, vad_sentence_start_time=None, vad_sente
                 
             # 无论是否有文本，都发送结果
             mode = "2pass-offline" if "2pass" in websocket.mode else websocket.mode
-
-            # 优先用VAD时间戳
-            start_time = vad_sentence_start_time if vad_sentence_start_time is not None else getattr(websocket, "last_end_time", time.time())
-            end_time = vad_sentence_end_time if vad_sentence_end_time is not None else time.time()
-
             message = json.dumps(
                 {
                     "mode": mode,
                     "text": rec_result["text"],
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "timestamp": rec_result.get("timestamp", []), 
                     "wav_name": websocket.wav_name,
-                    "is_final": True,
+                    "is_final": True,  # 文件模式下总是设置为最终结果
                 }
             )
-            websocket.last_end_time = end_time 
             logger.info(f"发送识别结果: {message}")
             await websocket.send(message)
             
@@ -453,7 +428,6 @@ async def async_asr(websocket, audio_in, vad_sentence_start_time=None, vad_sente
                 {
                     "mode": mode,
                     "text": f"识别处理出错，请重试。错误: {str(e)}",
-                    "timestamp": [],
                     "wav_name": websocket.wav_name,
                     "is_final": True,
                     "error": str(e)
@@ -467,7 +441,6 @@ async def async_asr(websocket, audio_in, vad_sentence_start_time=None, vad_sente
             {
                 "mode": mode,
                 "text": "",
-                "timestamp": [],
                 "wav_name": websocket.wav_name,
                 "is_final": True,
             }
@@ -478,7 +451,7 @@ async def async_asr_online(websocket, audio_in):
     if len(audio_in) > 0:
         # logger.info(websocket.status_dict_asr_online.get("is_final", False))
         rec_result = model_asr_streaming.generate(
-            input=audio_in, output_key=["text", "timestamp"], **websocket.status_dict_asr_online
+            input=audio_in, **websocket.status_dict_asr_online
         )[0]
         # logger.info("online, ", rec_result)
         if websocket.mode == "2pass" and websocket.status_dict_asr_online.get("is_final", False):
@@ -486,22 +459,14 @@ async def async_asr_online(websocket, audio_in):
             #     websocket.status_dict_asr_online["cache"] = dict()
         if len(rec_result["text"]):
             mode = "2pass-online" if "2pass" in websocket.mode else websocket.mode
-
-            start_time = getattr(websocket, "last_end_time", time.time())
-            end_time = time.time()
-
             message = json.dumps(
                 {
                     "mode": mode,
                     "text": rec_result["text"],
-                    "start_time": start_time,   # 新增
-                    "end_time": end_time,       # 新增
-                    "timestamp": rec_result.get("timestamp", []), 
                     "wav_name": websocket.wav_name,
                     "is_final": websocket.is_speaking,
                 }
             )
-            websocket.last_end_time = end_time 
             await websocket.send(message)
 
 
