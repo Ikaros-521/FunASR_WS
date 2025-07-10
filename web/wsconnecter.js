@@ -60,7 +60,14 @@ function WebSocketConnectMethod(config) { //定义socket连接方法类
 
 	// SOCEKT连接中的消息与状态响应
 	function onOpen(e) {
-		// 发送json
+		// 发送json 
+		// 左上下文：用于模型理解前文 。当前帧：本次推理的主音频帧数。 右上下文：用于模型理解后文（流式时一般较小）
+		// 实时性要求高：
+		// 推荐 [4, 8, 4] 或 [5, 10, 5]，延迟低，适合对话、直播等场景。
+		// 准确率优先：短的停顿就不会被切分识别了
+		// 推荐 [8, 16, 8] 或 [16, 32, 16]，适合离线转写、会议记录等。
+		// 极端低延迟：
+		// 可尝试 [1, 8, 1]，但要注意识别准确率下降。
 		var chunk_size = new Array(5, 10, 5);
 		var request = {
 			"chunk_size": chunk_size,
