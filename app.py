@@ -15,7 +15,7 @@ def to_srt(sentences):
     return srt.strip()
 
 def asr_recognize(audio_path, use_ssl):
-    url = "https://127.0.0.1:8000/recognition" if use_ssl else "http://127.0.0.1:8000/recognition"
+    url = "https://127.0.0.1:8200/recognition" if use_ssl else "http://127.0.0.1:8200/recognition"
     files = {'audio': open(audio_path, 'rb')}
     try:
         resp = requests.post(url, files=files, verify=False)

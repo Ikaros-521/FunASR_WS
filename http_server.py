@@ -18,7 +18,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument(
     "--host", type=str, default="0.0.0.0", required=False, help="host ip, localhost, 0.0.0.0"
 )
-parser.add_argument("--port", type=int, default=8000, required=False, help="server port")
+parser.add_argument("--port", type=int, default=8200, required=False, help="server port")
 parser.add_argument(
     "--asr_model",
     type=str,
@@ -74,6 +74,7 @@ model = AutoModel(
     device=args.device,
     disable_pbar=True,
     disable_log=True,
+    disable_update=True
 )
 logger.info("loaded models!")
 
