@@ -1,0 +1,9 @@
+fastapi
+loguru
+uvicorn
+websockets==12.0
+pydub
+onnxruntime
+onnx==1.15.0
+FunASR==1.1.16
+av
