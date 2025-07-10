@@ -302,10 +302,12 @@ async def ws_serve(websocket, path):
                         len(frames_asr_online) % websocket.chunk_interval == 0
                         or websocket.status_dict_asr_online["is_final"]
                     ):
-                        if websocket.mode == "2pass" or websocket.mode == "online":
+                        if websocket.mode == "2pass" or websocket.mode == "online" or websocket.mode == "2pass-sentence":
                             audio_in = b"".join(frames_asr_online)
                             try:
-                                await async_asr_online(websocket, audio_in)
+                                # 2pass-final模式下不发送流式识别结果
+                                if websocket.mode != "2pass-final":
+                                    await async_asr_online(websocket, audio_in)
                             except Exception as e:
                                 logger.error(f"在线ASR处理出错: {str(e)}")
                         frames_asr_online = []
@@ -325,7 +327,7 @@ async def ws_serve(websocket, path):
                 # asr punc offline - 非文件模式下的处理
                 if not websocket.is_file_mode and (speech_end_i != -1 or not websocket.is_speaking):
                     logger.info("检测到语音结束点或停止说话")
-                    if websocket.mode == "2pass" or websocket.mode == "offline":
+                    if websocket.mode == "2pass" or websocket.mode == "offline" or websocket.mode == "2pass-final" or websocket.mode == "2pass-sentence":
                         audio_in = b"".join(frames_asr)
                         logger.info(f"离线ASR处理，数据大小: {len(audio_in)} 字节")
                         try:
@@ -407,7 +409,11 @@ async def async_asr(websocket, audio_in):
                 logger.warning("识别结果为空或只有一个字符，可能是音频数据有问题")
                 
             # 无论是否有文本，都发送结果
-            mode = "2pass-offline" if "2pass" in websocket.mode else websocket.mode
+            if "2pass" in websocket.mode:
+                mode = "2pass-offline" if websocket.mode == "2pass" else websocket.mode
+            else:
+                mode = websocket.mode
+                
             message = json.dumps(
                 {
                     "mode": mode,
@@ -423,7 +429,11 @@ async def async_asr(websocket, audio_in):
             logger.error(f"ASR处理出错: {str(e)}")
             logger.exception(e)  # 打印完整堆栈跟踪
             # 发送错误信息
-            mode = "2pass-offline" if "2pass" in websocket.mode else websocket.mode
+            if "2pass" in websocket.mode:
+                mode = "2pass-offline" if websocket.mode == "2pass" else websocket.mode
+            else:
+                mode = websocket.mode
+                
             message = json.dumps(
                 {
                     "mode": mode,
@@ -436,7 +446,11 @@ async def async_asr(websocket, audio_in):
             await websocket.send(message)
     else:
         logger.info("收到空音频数据")
-        mode = "2pass-offline" if "2pass" in websocket.mode else websocket.mode
+        if "2pass" in websocket.mode:
+            mode = "2pass-offline" if websocket.mode == "2pass" else websocket.mode
+        else:
+            mode = websocket.mode
+            
         message = json.dumps(
             {
                 "mode": mode,
@@ -458,16 +472,35 @@ async def async_asr_online(websocket, audio_in):
             return
             #     websocket.status_dict_asr_online["cache"] = dict()
         if len(rec_result["text"]):
-            mode = "2pass-online" if "2pass" in websocket.mode else websocket.mode
-            message = json.dumps(
-                {
-                    "mode": mode,
-                    "text": rec_result["text"],
-                    "wav_name": websocket.wav_name,
-                    "is_final": websocket.is_speaking,
-                }
-            )
-            await websocket.send(message)
+            # 2pass-sentence模式下，只在检测到句子结束时发送消息
+            if websocket.mode == "2pass-sentence":
+                # 检测句子结束的标志（句号、问号、感叹号等）
+                text = rec_result["text"]
+                if any(text.endswith(p) for p in ["。", "？", "！", ".", "?", "!"]):
+                    mode = "2pass-sentence"
+                    message = json.dumps(
+                        {
+                            "mode": mode,
+                            "text": text,
+                            "wav_name": websocket.wav_name,
+                            "is_final": False,
+                            "is_sentence_end": True
+                        }
+                    )
+                    logger.info(f"检测到句子结束，发送断句信息: {text}")
+                    await websocket.send(message)
+            # 普通模式下正常发送流式结果
+            elif websocket.mode != "2pass-final":
+                mode = "2pass-online" if "2pass" in websocket.mode else websocket.mode
+                message = json.dumps(
+                    {
+                        "mode": mode,
+                        "text": rec_result["text"],
+                        "wav_name": websocket.wav_name,
+                        "is_final": websocket.is_speaking,
+                    }
+                )
+                await websocket.send(message)
 
 
 # 添加WAV文件头解析函数

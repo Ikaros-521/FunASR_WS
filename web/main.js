@@ -460,9 +460,10 @@ function getJsonMessage(jsonMsg) {
 		var asrmodel = jsonData['mode'] || "";
 		var is_final = jsonData['is_final'];
 		var timestamp = jsonData['timestamp'];
+		var is_sentence_end = jsonData['is_sentence_end'] || false;
 		
 		// 记录接收到的消息，便于调试
-		console.log("Mode:", asrmodel, "Text:", rectxt, "Is Final:", is_final);
+		console.log("Mode:", asrmodel, "Text:", rectxt, "Is Final:", is_final, "Is Sentence End:", is_sentence_end);
 		
 		// 文件模式下特殊处理
 		if (isfilemode) {
@@ -547,6 +548,57 @@ function getJsonMessage(jsonMsg) {
 				}
 
 				waitSpeakingEnd();
+			}
+		}
+		else if (asrmodel == "2pass-sentence") {
+			// 处理句子级别的识别结果
+			if (rectxt && rectxt.trim().length > 0) {
+				// 如果是句子结束或最终结果
+				if (is_sentence_end || is_final) {
+					// 过滤特殊字符
+					rectxt = rectxt.replace(/<[^>]*>/g, '');
+					
+					// 如果是最终结果，替换整个文本
+					if (is_final) {
+						rec_text = rectxt.replace(/ +/g, "");
+					} else {
+						// 否则添加新句子
+						rec_text = rec_text + rectxt.replace(/ +/g, "") + '\n';
+					}
+					
+					// 转发到其他服务
+					if (data_forward == "livetalking") {
+						fetch(buildUrl(document.getElementById("livetalking_api_url").value, '/human'), {
+							body: JSON.stringify({
+								text: rectxt.replace(/ +/g, ""),
+								type: 'chat',
+							}),
+							headers: {
+								'Content-Type': 'application/json'
+							},
+							method: 'POST'
+						});
+					} else if (data_forward == "ai_vtuber") {
+						fetch(buildUrl(document.getElementById("ai_vtuber_api_url").value, '/send'), {
+							body: JSON.stringify({
+								type: 'comment',
+								data: {
+									"type": 'comment',
+									"username": '主人',
+									"content": rectxt.replace(/ +/g, ""),
+								}
+							}),
+							headers: {
+								'Content-Type': 'application/json'
+							},
+							method: 'POST'
+						});
+					}
+					
+					if (is_final) {
+						waitSpeakingEnd();
+					}
+				}
 			}
 		}
 		else {
