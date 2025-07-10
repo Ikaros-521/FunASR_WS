@@ -68,7 +68,7 @@ function WebSocketConnectMethod(config) { //定义socket连接方法类
 		// 推荐 [8, 16, 8] 或 [16, 32, 16]，适合离线转写、会议记录等。
 		// 极端低延迟：
 		// 可尝试 [1, 8, 1]，但要注意识别准确率下降。
-		var chunk_size = new Array(5, 10, 5);
+		var chunk_size = new Array(4, 8, 4);
 		var request = {
 			"chunk_size": chunk_size,
 			"wav_name": isfilemode ? file_ext : "h5",

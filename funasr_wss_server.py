@@ -420,7 +420,8 @@ async def async_asr(websocket, audio_in):
                     "text": rec_result["text"],
                     "wav_name": websocket.wav_name,
                     "is_final": True,  # 文件模式下总是设置为最终结果
-                }
+                },
+                ensure_ascii=False
             )
             logger.info(f"发送识别结果: {message}")
             await websocket.send(message)
@@ -441,7 +442,8 @@ async def async_asr(websocket, audio_in):
                     "wav_name": websocket.wav_name,
                     "is_final": True,
                     "error": str(e)
-                }
+                },
+                ensure_ascii=False
             )
             await websocket.send(message)
     else:
@@ -457,7 +459,8 @@ async def async_asr(websocket, audio_in):
                 "text": "",
                 "wav_name": websocket.wav_name,
                 "is_final": True,
-            }
+            },
+            ensure_ascii=False
         )
         await websocket.send(message)    
 
@@ -467,28 +470,75 @@ async def async_asr_online(websocket, audio_in):
         rec_result = model_asr_streaming.generate(
             input=audio_in, **websocket.status_dict_asr_online
         )[0]
-        # logger.info("online, ", rec_result)
+        # logger.info(f"流式识别结果: {rec_result}")
         if websocket.mode == "2pass" and websocket.status_dict_asr_online.get("is_final", False):
             return
             #     websocket.status_dict_asr_online["cache"] = dict()
         if len(rec_result["text"]):
             # 2pass-sentence模式下，只在检测到句子结束时发送消息
             if websocket.mode == "2pass-sentence":
-                # 检测句子结束的标志（句号、问号、感叹号等）
+                # 获取当前识别的文本
                 text = rec_result["text"]
-                if any(text.endswith(p) for p in ["。", "？", "！", ".", "?", "!"]):
+                # logger.info(f"2pass-sentence模式收到原始文本: '{text}'")
+                
+                # 初始化句子缓存（如果不存在）
+                if not hasattr(websocket, 'sentence_cache'):
+                    websocket.sentence_cache = ""
+                    
+                # 检查是否有句子结束的标点符号
+                punctuation_marks = ["。", "？", "！", ".", "?", "!"]
+                
+                # 直接检查文本中是否包含标点符号
+                has_punctuation = False
+                for punct in punctuation_marks:
+                    if punct in text:
+                        has_punctuation = True
+                        break
+                
+                if has_punctuation:
+                    # 查找所有标点符号的位置
+                    punct_positions = []
+                    for punct in punctuation_marks:
+                        pos = text.find(punct)
+                        while pos != -1:
+                            punct_positions.append(pos)
+                            pos = text.find(punct, pos + 1)
+                    
+                    # 按位置排序
+                    punct_positions.sort()
+                    # 找到最后一个标点符号的位置
+                    last_punct_pos = punct_positions[-1]
+                    
+                    # 提取完整的句子（包含标点符号）
+                    complete_sentence = text[:last_punct_pos + 1]
+                    logger.info(f"检测到句子结束标点，提取句子: '{complete_sentence}'")
+                    
+                    # 打印字符编码，用于调试
+                    logger.info(f"句子中的字符编码: {[ord(c) for c in complete_sentence]}")
+                    
+                    # 发送完整句子
                     mode = "2pass-sentence"
                     message = json.dumps(
                         {
                             "mode": mode,
-                            "text": text,
+                            "text": complete_sentence,
                             "wav_name": websocket.wav_name,
                             "is_final": False,
                             "is_sentence_end": True
-                        }
+                        },
+                        ensure_ascii=False
                     )
-                    logger.info(f"检测到句子结束，发送断句信息: {text}")
+                    logger.info(f"发送断句信息，JSON内容: {message}")
                     await websocket.send(message)
+                    
+                    # 保留剩余部分作为下一句的开始
+                    websocket.sentence_cache = text[last_punct_pos + 1:]
+                    logger.info(f"保留剩余部分作为下一句的开始: '{websocket.sentence_cache}'")
+                else:
+                    # 如果没有检测到句子结束，则更新缓存
+                    websocket.sentence_cache = text
+                    logger.info(f"未检测到句子结束标点，更新缓存: '{websocket.sentence_cache}'")
+                    
             # 普通模式下正常发送流式结果
             elif websocket.mode != "2pass-final":
                 mode = "2pass-online" if "2pass" in websocket.mode else websocket.mode
@@ -498,7 +548,8 @@ async def async_asr_online(websocket, audio_in):
                         "text": rec_result["text"],
                         "wav_name": websocket.wav_name,
                         "is_final": websocket.is_speaking,
-                    }
+                    },
+                    ensure_ascii=False
                 )
                 await websocket.send(message)
 

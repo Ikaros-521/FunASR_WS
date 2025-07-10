@@ -553,17 +553,31 @@ function getJsonMessage(jsonMsg) {
 		else if (asrmodel == "2pass-sentence") {
 			// 处理句子级别的识别结果
 			if (rectxt && rectxt.trim().length > 0) {
+				// 打印调试信息
+				console.log("2pass-sentence模式收到文本:", JSON.stringify(rectxt));
+				console.log("是否包含标点符号:", 
+					rectxt.includes("。") || rectxt.includes("？") || rectxt.includes("！") || 
+					rectxt.includes(".") || rectxt.includes("?") || rectxt.includes("!"));
+				
 				// 如果是句子结束或最终结果
 				if (is_sentence_end || is_final) {
 					// 过滤特殊字符
 					rectxt = rectxt.replace(/<[^>]*>/g, '');
+					console.log("过滤特殊字符后:", JSON.stringify(rectxt));
 					
 					// 如果是最终结果，替换整个文本
 					if (is_final) {
 						rec_text = rectxt.replace(/ +/g, "");
+						console.log("最终结果:", JSON.stringify(rec_text));
 					} else {
-						// 否则添加新句子
-						rec_text = rec_text + rectxt.replace(/ +/g, "") + '\n';
+						// 否则添加新句子，保留标点符号
+						rec_text = rec_text + rectxt.replace(/ +/g, "");
+						console.log("添加新句子后:", JSON.stringify(rec_text));
+						
+						// 如果句子不是以换行符结束的，添加换行符
+						if (!rec_text.endsWith('\n')) {
+							rec_text = rec_text + '\n';
+						}
 					}
 					
 					// 转发到其他服务
