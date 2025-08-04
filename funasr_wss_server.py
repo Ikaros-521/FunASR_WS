@@ -615,12 +615,12 @@ async def async_asr_online(websocket, audio_in):
                 logger.info("处理前检测到WebSocket已关闭，跳过在线ASR处理")
                 return
                 
-            logger.info(f'is_final={websocket.status_dict_asr_online.get("is_final", False)}')
+            # logger.info(f'is_final={websocket.status_dict_asr_online.get("is_final", False)}')
 
             rec_result = model_asr_streaming.generate(
                 input=audio_in, **websocket.status_dict_asr_online
             )[0]
-            logger.info(f"收到音频数据，长度为{len(audio_in)}，识别结果为line, {rec_result}")
+            # logger.info(f"收到音频数据，长度为{len(audio_in)}，识别结果为line, {rec_result}")
             
             # 再次检查连接状态，防止在ASR处理过程中连接已关闭
             if hasattr(websocket, 'is_closed') and websocket.is_closed:
