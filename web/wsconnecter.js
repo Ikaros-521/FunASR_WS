@@ -48,13 +48,9 @@ function WebSocketConnectMethod(config) { //定义socket连接方法类
 	};
 
 	this.wsSend = function (oneData) {
-
 		if (speechSokt == undefined) return;
 		if (speechSokt.readyState === 1) { // 0:CONNECTING, 1:OPEN, 2:CLOSING, 3:CLOSED
-
 			speechSokt.send(oneData);
-
-
 		}
 	};
 

@@ -565,19 +565,13 @@ function getJsonMessage(jsonMsg) {
 					rectxt = rectxt.replace(/<[^>]*>/g, '');
 					console.log("过滤特殊字符后:", JSON.stringify(rectxt));
 					
-					// 如果是最终结果，替换整个文本
+					// 添加新句子，保留标点符号
+					rec_text = rec_text + rectxt.replace(/ +/g, "");
+					console.log("添加新句子后:", JSON.stringify(rec_text));
+					
+					// 如果是最终结果，添加换行符
 					if (is_final) {
-						rec_text = rectxt.replace(/ +/g, "");
-						console.log("最终结果:", JSON.stringify(rec_text));
-					} else {
-						// 否则添加新句子，保留标点符号
-						rec_text = rec_text + rectxt.replace(/ +/g, "");
-						console.log("添加新句子后:", JSON.stringify(rec_text));
-						
-						// 如果句子不是以换行符结束的，添加换行符
-						if (!rec_text.endsWith('\n')) {
-							rec_text = rec_text + '\n';
-						}
+						rec_text = rec_text + '\n';
 					}
 					
 					// 转发到其他服务
