@@ -143,9 +143,67 @@ async def ws_reset(websocket):
 
 
 async def clear_websocket():
-    for websocket in websocket_users:
-        await ws_reset(websocket)
+    """清理所有WebSocket连接"""
+    for websocket in list(websocket_users):  # 使用list创建副本，避免在迭代时修改集合
+        try:
+            await ws_reset(websocket)
+        except Exception as e:
+            logger.error(f"重置WebSocket时出错: {str(e)}")
     websocket_users.clear()
+    logger.info("已清理所有WebSocket连接")
+
+
+async def check_inactive_connections():
+    """定期检查并清理不活跃的连接"""
+    # 连接超时时间（秒）
+    CONNECTION_TIMEOUT = 3600  # 60分钟
+    
+    while True:
+        try:
+            current_time = time.time()
+            inactive_connections = []
+            
+            # 检查所有连接
+            for ws in list(websocket_users):  # 使用list创建副本，避免在迭代时修改集合
+                try:
+                    # 检查连接是否已关闭
+                    if hasattr(ws, 'is_closed') and ws.is_closed:
+                        inactive_connections.append(ws)
+                        continue
+                        
+                    # 检查最后活动时间
+                    if hasattr(ws, 'last_activity_time'):
+                        inactive_time = current_time - ws.last_activity_time
+                        if inactive_time > CONNECTION_TIMEOUT:
+                            logger.info(f"检测到不活跃连接，已闲置 {inactive_time:.1f} 秒，准备关闭")
+                            inactive_connections.append(ws)
+                except Exception as e:
+                    logger.error(f"检查连接状态时出错: {str(e)}")
+                    # 出错的连接也标记为不活跃
+                    inactive_connections.append(ws)
+            
+            # 关闭不活跃的连接
+            for ws in inactive_connections:
+                try:
+                    logger.info(f"关闭不活跃连接")
+                    await ws_reset(ws)
+                    if ws in websocket_users:
+                        websocket_users.remove(ws)
+                except Exception as e:
+                    logger.error(f"关闭不活跃连接时出错: {str(e)}")
+                    # 确保从集合中移除，即使关闭出错
+                    if ws in websocket_users:
+                        websocket_users.remove(ws)
+            
+            if inactive_connections:
+                logger.info(f"已清理 {len(inactive_connections)} 个不活跃连接，当前连接数: {len(websocket_users)}")
+                
+        except Exception as e:
+            logger.error(f"清理不活跃连接时出错: {str(e)}")
+            logger.exception(e)  # 打印完整堆栈跟踪
+        
+        # 每60秒检查一次
+        await asyncio.sleep(60)
 
 
 async def ws_serve(websocket, path):
@@ -153,7 +211,9 @@ async def ws_serve(websocket, path):
     frames_asr = []
     frames_asr_online = []
     global websocket_users
-    # await clear_websocket()
+    # 记录连接时间，用于超时检测
+    websocket.connect_time = time.time()
+    websocket.last_activity_time = time.time()
     websocket_users.add(websocket)
     websocket.status_dict_asr = {}
     websocket.status_dict_asr_online = {"cache": {}, "is_final": False}
@@ -170,10 +230,14 @@ async def ws_serve(websocket, path):
     websocket.is_speaking = True  # 默认为说话状态
     websocket.wav_format = ""  # 文件格式
     websocket.audio_fs = 16000  # 默认采样率 - ASR模型期望16kHz
-    logger.info("新用户已连接")
+    websocket.is_closed = False  # 标记连接是否已关闭
+    logger.info(f"新用户已连接，当前连接数: {len(websocket_users)}")
 
     try:
         async for message in websocket:
+            # 更新最后活动时间
+            websocket.last_activity_time = time.time()
+            
             if isinstance(message, str):
                 messagejson = json.loads(message)
 
@@ -182,7 +246,7 @@ async def ws_serve(websocket, path):
                     websocket.status_dict_asr_online["is_final"] = not websocket.is_speaking
                     logger.info(f"说话状态更新: {websocket.is_speaking}")
                     
-                                         # 如果是文件模式且停止说话，处理所有累积的数据
+                    # 如果是文件模式且停止说话，处理所有累积的数据
                     if websocket.is_file_mode and not websocket.is_speaking and len(websocket.file_data) > 0:
                         logger.info(f"文件模式: 处理累积的数据，大小: {len(websocket.file_data)} 块")
                         try:
@@ -345,14 +409,38 @@ async def ws_serve(websocket, path):
                     else:
                         frames = frames[-20:]
 
-    except websockets.ConnectionClosed:
-        logger.info("ConnectionClosed...", websocket_users, flush=True)
+    except websockets.ConnectionClosed as e:
+        logger.info(f"ConnectionClosed... 原因: {str(e)}")
         await ws_reset(websocket)
-        websocket_users.remove(websocket)
+        if websocket in websocket_users:
+            websocket_users.remove(websocket)
+        websocket.is_closed = True
+        logger.info(f"连接已关闭，当前连接数: {len(websocket_users)}")
     except websockets.InvalidState:
         logger.info("InvalidState...")
+        if websocket in websocket_users:
+            websocket_users.remove(websocket)
+        websocket.is_closed = True
     except Exception as e:
-        logger.info("Exception:", e)
+        logger.error(f"处理WebSocket连接时发生异常: {str(e)}")
+        logger.exception(e)  # 打印完整堆栈跟踪
+        try:
+            await ws_reset(websocket)
+            if websocket in websocket_users:
+                websocket_users.remove(websocket)
+            websocket.is_closed = True
+        except Exception as close_error:
+            logger.error(f"关闭连接时发生异常: {str(close_error)}")
+        logger.info(f"异常处理后，当前连接数: {len(websocket_users)}")
+    finally:
+        # 确保连接被正确清理
+        if not hasattr(websocket, 'is_closed') or (not websocket.is_closed and websocket in websocket_users):
+            try:
+                await ws_reset(websocket)
+                websocket_users.remove(websocket)
+                logger.info(f"finally块中清理连接，当前连接数: {len(websocket_users)}")
+            except Exception as final_error:
+                logger.error(f"finally块中清理连接时发生异常: {str(final_error)}")
 
 
 async def async_vad(websocket, audio_in):
@@ -373,9 +461,24 @@ async def async_vad(websocket, audio_in):
 
 
 async def async_asr(websocket, audio_in):
+    # 首先检查WebSocket连接是否已关闭
+    if hasattr(websocket, 'is_closed') and websocket.is_closed:
+        logger.info("WebSocket已关闭，跳过离线ASR处理")
+        return
+        
+    # 检查连接是否仍在websocket_users集合中
+    if websocket not in websocket_users:
+        logger.info("WebSocket连接不在活跃连接集合中，跳过离线ASR处理")
+        return
+        
     if len(audio_in) > 0:
         logger.info(f"处理音频数据，长度: {len(audio_in)} 字节")
         try:
+            # 再次检查连接状态，防止在处理过程中连接已关闭
+            if hasattr(websocket, 'is_closed') and websocket.is_closed:
+                logger.info("处理前检测到WebSocket已关闭，跳过离线ASR处理")
+                return
+                
             # 对于文件模式，添加特殊处理
             if websocket.is_file_mode:
                 logger.info("使用文件模式处理ASR")
@@ -391,11 +494,21 @@ async def async_asr(websocket, audio_in):
                     audio_in = resample_audio(audio_in, websocket.audio_fs, 16000)
                     logger.info(f"重采样后的数据大小: {len(audio_in)} 字节")
             
+            # 再次检查连接状态
+            if hasattr(websocket, 'is_closed') and websocket.is_closed:
+                logger.info("重采样后检测到WebSocket已关闭，跳过离线ASR处理")
+                return
+                
             # 调用ASR模型进行识别
             logger.info("调用ASR模型进行识别...")
             rec_result = model_asr.generate(input=audio_in, **websocket.status_dict_asr)[0]
             logger.info(f"ASR识别结果: {rec_result}")
             
+            # 再次检查连接状态
+            if hasattr(websocket, 'is_closed') and websocket.is_closed:
+                logger.info("ASR处理后检测到WebSocket已关闭，跳过发送结果")
+                return
+                
             # 应用标点符号
             if model_punc is not None and len(rec_result["text"]) > 0:
                 logger.info(f"应用标点符号前: {rec_result['text']}")
@@ -404,6 +517,11 @@ async def async_asr(websocket, audio_in):
                 )[0]
                 logger.info(f"应用标点符号后: {rec_result['text']}")
             
+            # 再次检查连接状态
+            if hasattr(websocket, 'is_closed') and websocket.is_closed:
+                logger.info("标点处理后检测到WebSocket已关闭，跳过发送结果")
+                return
+                
             # 检查识别结果
             if not rec_result["text"] or len(rec_result["text"].strip()) <= 1:
                 logger.warning("识别结果为空或只有一个字符，可能是音频数据有问题")
@@ -413,6 +531,11 @@ async def async_asr(websocket, audio_in):
                 mode = "2pass-offline" if websocket.mode == "2pass" else websocket.mode
             else:
                 mode = websocket.mode
+                
+            # 最后一次检查连接状态
+            if hasattr(websocket, 'is_closed') and websocket.is_closed:
+                logger.info("发送前检测到WebSocket已关闭，跳过发送结果")
+                return
                 
             message = json.dumps(
                 {
@@ -425,10 +548,40 @@ async def async_asr(websocket, audio_in):
             logger.info(f"发送识别结果: {message}")
             await websocket.send(message)
             
+        except websockets.ConnectionClosed:
+            logger.info("WebSocket连接已关闭，停止离线ASR处理")
+            # 标记连接已关闭
+            websocket.is_closed = True
+            if websocket in websocket_users:
+                websocket_users.remove(websocket)
         except Exception as e:
             logger.error(f"ASR处理出错: {str(e)}")
             logger.exception(e)  # 打印完整堆栈跟踪
             # 发送错误信息
+            try:
+                # 检查连接是否仍然打开
+                if not hasattr(websocket, 'is_closed') or not websocket.is_closed:
+                    if "2pass" in websocket.mode:
+                        mode = "2pass-offline" if websocket.mode == "2pass" else websocket.mode
+                    else:
+                        mode = websocket.mode
+                        
+                    message = json.dumps(
+                        {
+                            "mode": mode,
+                            "text": f"识别处理出错，请重试。错误: {str(e)}",
+                            "wav_name": websocket.wav_name,
+                            "is_final": True,
+                            "error": str(e)
+                        }
+                    )
+                    await websocket.send(message)
+            except Exception as send_error:
+                logger.error(f"发送错误信息时出错: {str(send_error)}")
+    else:
+        # 检查连接是否仍然打开
+        if not hasattr(websocket, 'is_closed') or not websocket.is_closed:
+            logger.info("收到空音频数据")
             if "2pass" in websocket.mode:
                 mode = "2pass-offline" if websocket.mode == "2pass" else websocket.mode
             else:
@@ -437,70 +590,137 @@ async def async_asr(websocket, audio_in):
             message = json.dumps(
                 {
                     "mode": mode,
-                    "text": f"识别处理出错，请重试。错误: {str(e)}",
+                    "text": "",
                     "wav_name": websocket.wav_name,
                     "is_final": True,
-                    "error": str(e)
                 }
             )
             await websocket.send(message)
-    else:
-        logger.info("收到空音频数据")
-        if "2pass" in websocket.mode:
-            mode = "2pass-offline" if websocket.mode == "2pass" else websocket.mode
-        else:
-            mode = websocket.mode
-            
-        message = json.dumps(
-            {
-                "mode": mode,
-                "text": "",
-                "wav_name": websocket.wav_name,
-                "is_final": True,
-            }
-        )
-        await websocket.send(message)    
 
 async def async_asr_online(websocket, audio_in):
+    # 首先检查WebSocket连接是否已关闭
+    if hasattr(websocket, 'is_closed') and websocket.is_closed:
+        logger.info("WebSocket已关闭，跳过在线ASR处理")
+        return
+        
+    # 检查连接是否仍在websocket_users集合中
+    if websocket not in websocket_users:
+        logger.info("WebSocket连接不在活跃连接集合中，跳过在线ASR处理")
+        return
+        
     if len(audio_in) > 0:
-        # logger.info(websocket.status_dict_asr_online.get("is_final", False))
-        rec_result = model_asr_streaming.generate(
-            input=audio_in, **websocket.status_dict_asr_online
-        )[0]
-        # logger.info("online, ", rec_result)
-        if websocket.mode == "2pass" and websocket.status_dict_asr_online.get("is_final", False):
-            return
-            #     websocket.status_dict_asr_online["cache"] = dict()
-        if len(rec_result["text"]):
-            # 2pass-sentence模式下，只在检测到句子结束时发送消息
-            if websocket.mode == "2pass-sentence":
-                # 检测句子结束的标志（句号、问号、感叹号等）
-                text = rec_result["text"]
-                if any(text.endswith(p) for p in ["。", "？", "！", ".", "?", "!"]):
-                    mode = "2pass-sentence"
+        try:
+            # 再次检查连接状态，防止在处理过程中连接已关闭
+            if hasattr(websocket, 'is_closed') and websocket.is_closed:
+                logger.info("处理前检测到WebSocket已关闭，跳过在线ASR处理")
+                return
+                
+            logger.info(f'is_final={websocket.status_dict_asr_online.get("is_final", False)}')
+
+            rec_result = model_asr_streaming.generate(
+                input=audio_in, **websocket.status_dict_asr_online
+            )[0]
+            logger.info(f"收到音频数据，长度为{len(audio_in)}，识别结果为line, {rec_result}")
+            
+            # 再次检查连接状态，防止在ASR处理过程中连接已关闭
+            if hasattr(websocket, 'is_closed') and websocket.is_closed:
+                logger.info("ASR处理后检测到WebSocket已关闭，跳过发送结果")
+                return
+                
+            # 修复2pass模式下不输出结果的问题
+            # 只有在is_final为True且模式为2pass时才跳过发送
+            # 这样可以确保在2pass模式下，非最终结果仍然会发送
+            if websocket.mode == "2pass" and websocket.status_dict_asr_online.get("is_final", False):
+                logger.debug("2pass模式下跳过发送最终在线结果，等待离线结果")
+                return
+                
+            # 确保有文本结果才发送
+            if len(rec_result["text"]):
+                # 2pass-sentence模式下，只在检测到句子结束时发送消息
+                if websocket.mode == "2pass-sentence":
+                    # 检测句子结束的标志（句号、问号、感叹号等）
+                    text = rec_result["text"]
+                    if any(text.endswith(p) for p in ["。", "？", "！", ".", "?", "!"]):
+                        # 再次检查连接状态
+                        if hasattr(websocket, 'is_closed') and websocket.is_closed:
+                            logger.info("发送前检测到WebSocket已关闭，跳过发送结果")
+                            return
+                            
+                        mode = "2pass-sentence"
+                        message = json.dumps(
+                            {
+                                "mode": mode,
+                                "text": text,
+                                "wav_name": websocket.wav_name,
+                                "is_final": False,
+                                "is_sentence_end": True
+                            }
+                        )
+                        logger.info(f"检测到句子结束，发送断句信息: {text}")
+                        await websocket.send(message)
+                # 普通模式下正常发送流式结果
+                elif websocket.mode != "2pass-final":
+                    # 再次检查连接状态
+                    if hasattr(websocket, 'is_closed') and websocket.is_closed:
+                        logger.info("发送前检测到WebSocket已关闭，跳过发送结果")
+                        return
+                        
+                    mode = "2pass-online" if "2pass" in websocket.mode else websocket.mode
                     message = json.dumps(
                         {
                             "mode": mode,
-                            "text": text,
+                            "text": rec_result["text"],
                             "wav_name": websocket.wav_name,
-                            "is_final": False,
-                            "is_sentence_end": True
+                            "is_final": websocket.status_dict_asr_online.get("is_final", False),
                         }
                     )
-                    logger.info(f"检测到句子结束，发送断句信息: {text}")
                     await websocket.send(message)
-            # 普通模式下正常发送流式结果
-            elif websocket.mode != "2pass-final":
-                mode = "2pass-online" if "2pass" in websocket.mode else websocket.mode
-                message = json.dumps(
-                    {
-                        "mode": mode,
-                        "text": rec_result["text"],
-                        "wav_name": websocket.wav_name,
-                        "is_final": websocket.is_speaking,
-                    }
-                )
-                await websocket.send(message)
+            else:
+                # 即使没有文本，也发送空结果，避免客户端等待
+                if websocket.mode != "2pass-final" and websocket.mode != "2pass" and not websocket.status_dict_asr_online.get("is_final", False):
+                    # 再次检查连接状态
+                    if hasattr(websocket, 'is_closed') and websocket.is_closed:
+                        logger.info("发送前检测到WebSocket已关闭，跳过发送空结果")
+                        return
+                        
+                    mode = "2pass-online" if "2pass" in websocket.mode else websocket.mode
+                    message = json.dumps(
+                        {
+                            "mode": mode,
+                            "text": "",
+                            "wav_name": websocket.wav_name,
+                            "is_final": websocket.status_dict_asr_online.get("is_final", False),
+                        }
+                    )
+                    await websocket.send(message)
+        except websockets.ConnectionClosed:
+            logger.info("WebSocket连接已关闭，停止在线ASR处理")
+            # 标记连接已关闭
+            websocket.is_closed = True
+            if websocket in websocket_users:
+                websocket_users.remove(websocket)
+        except Exception as e:
+            logger.error(f"在线ASR处理出错: {str(e)}")
+            logger.exception(e)  # 打印完整堆栈跟踪
+            # 发送错误信息
+            try:
+                # 检查连接是否仍然打开
+                if not hasattr(websocket, 'is_closed') or not websocket.is_closed:
+                    mode = "2pass-online" if "2pass" in websocket.mode else websocket.mode
+                    message = json.dumps(
+                        {
+                            "mode": mode,
+                            "text": f"在线识别处理出错，请重试",
+                            "wav_name": websocket.wav_name,
+                            "is_final": True,
+                            "error": str(e)
+                        }
+                    )
+                    await websocket.send(message)
+            except Exception as send_error:
+                logger.error(f"发送错误信息时出错: {str(send_error)}")
+    else:
+        logger.debug("收到空音频数据，跳过在线ASR处理")
 
 
 # 添加WAV文件头解析函数
@@ -605,20 +825,49 @@ def resample_audio(audio_data, src_sr, target_sr=16000):
         return audio_data  # 出错时返回原始数据
 
 
-if len(args.certfile) > 0:
-    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+# 启动定期清理任务和WebSocket服务器
+async def main():
+    # 启动定期清理不活跃连接的任务
+    asyncio.create_task(check_inactive_connections())
+    
+    # 配置WebSocket服务器
+    if len(args.certfile) > 0:
+        try:
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 
-    # Generate with Lets Encrypt, copied to this location, chown to current user and 400 permissions
-    ssl_cert = args.certfile
-    ssl_key = args.keyfile
+            # Generate with Lets Encrypt, copied to this location, chown to current user and 400 permissions
+            ssl_cert = args.certfile
+            ssl_key = args.keyfile
 
-    ssl_context.load_cert_chain(ssl_cert, keyfile=ssl_key)
-    start_server = websockets.serve(
-        ws_serve, args.host, args.port, subprotocols=["binary"], ping_interval=None, ssl=ssl_context
-    )
-else:
-    start_server = websockets.serve(
-        ws_serve, args.host, args.port, subprotocols=["binary"], ping_interval=None
-    )
-asyncio.get_event_loop().run_until_complete(start_server)
-asyncio.get_event_loop().run_forever()
+            ssl_context.load_cert_chain(ssl_cert, keyfile=ssl_key)
+            server = await websockets.serve(
+                ws_serve, args.host, args.port, subprotocols=["binary"], ping_interval=None, ssl=ssl_context
+            )
+            logger.info(f"已启动SSL加密的WebSocket服务器，监听地址: {args.host}:{args.port}")
+        except Exception as e:
+            logger.error(f"启动SSL WebSocket服务器失败: {str(e)}")
+            logger.info("尝试启动非SSL WebSocket服务器...")
+            server = await websockets.serve(
+                ws_serve, args.host, args.port, subprotocols=["binary"], ping_interval=None
+            )
+            logger.info(f"已启动非SSL WebSocket服务器，监听地址: {args.host}:{args.port}")
+    else:
+        server = await websockets.serve(
+            ws_serve, args.host, args.port, subprotocols=["binary"], ping_interval=None
+        )
+        logger.info(f"已启动WebSocket服务器，监听地址: {args.host}:{args.port}")
+    
+    # 保持服务器运行
+    await asyncio.Future()  # 永久运行
+
+# 启动主程序
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("接收到中断信号，正在关闭服务器...")
+    except Exception as e:
+        logger.error(f"服务器运行出错: {str(e)}")
+        logger.exception(e)  # 打印完整堆栈跟踪
+    finally:
+        logger.info("服务器已关闭")
