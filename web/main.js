@@ -769,6 +769,7 @@ function stop() {
 		});
 	}
 	// 停止连接
+	wsconnecter.wsStop();
 }
 
 function clear() {
